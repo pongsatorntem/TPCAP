@@ -192,288 +192,123 @@ void setup() {
 //   Serial.println("Timer interrupt");
 // }
 
+
+
 void loop() {
-  // put your main code here, to run repeatedly:
+    // Read input channels from MCP23S17
+    int input_channel_1 = inputchip1.digitalRead();  // Read the first set of 16 inputs
+    int input_channel_2 = inputchip2.digitalRead();  // Read the second set of 16 inputs
 
-  int input_channel_1,input_channel_2;                        // declare an integer to hold the value temporarily.
-  input_channel_1 = inputchip1.digitalRead();  // read the input chip in word-mode, storing the result in "value"
-  input_channel_2 = inputchip2.digitalRead();  // read the input chip in word-mode, storing the result in "value"
-  // Serial.print(input_channel_1,BIN);
-  // Serial.print("  ");
-  // Serial.println(input_channel_2,BIN);
+    Serial.println("***********************************************************************************************************");
 
-  int hp = readHPFromDipSwitch();
-  Serial.print("Debounced HP value: ");
-  Serial.println(hp);
+    int hp = readHPFromDipSwitch();
+    Serial.print("Debounced HP value: ");
+    Serial.println(hp);
 
-  //Read PhotoSensor Loop: 100ms
-  U4 current_time = millis();
-  if ((millis() - lastTime) > timerDelay) 
-  {
+    // Print all sensors connected to ESP8266 (MCP23S17 chips)
+    Serial.println("All Sensors Connected to ESP8266:");
+    for (int sensorIndex = 0; sensorIndex < 32; sensorIndex++) {
+        int detect = 0;
+        if (sensorIndex < 16) {
+            detect = (input_channel_1 >> sensorIndex) & 0x01;  // From first MCP
+        } else {
+            detect = (input_channel_2 >> (sensorIndex - 16)) & 0x01;  // From second MCP
+        }
 
-    // Serial.print(input_channel_1,BIN);
-    // Serial.print("  ");
-    // Serial.println(input_channel_2,BIN);
-
-//  Serial.print(BIN_slot_1_flag);
-//  Serial.print(BIN_slot_2_flag);
-//  Serial.print(BIN_slot_3_flag);
-//  Serial.print(BIN_slot_4_flag);
-//  Serial.print(DOM_slot_1_flag);
-//  Serial.print(DOM_slot_2_flag);
-//  Serial.print(DOM_slot_3_flag);
-//  Serial.println(DOM_slot_4_flag);
-
-    
-    lastTime = millis();
-  }
-
-
-
-  /*****Input Define*****/
-  /*
-  RB0 = BIN_slot_1
-  RB1 = BIN_slot_2
-  RB2 = BIN_slot_3
-  RB3 = BIN_slot_4
-  RB4 = DOM_slot_1
-  RB5 = DOM_slot_2
-  RB6 = DOM_slot_3
-  RB7 = DOM_slot_4
-  */
-
-
-  BIN_slot_1_flag = (input_channel_1>>9)&0x01; //MCP1-GPB1
-  BIN_slot_2_flag = (input_channel_1>>8)&0x01; //MCP1-GPB0
-  BIN_slot_3_flag = 1-(input_channel_2>>8)&0x01; //MCP2-GPB0
-  BIN_slot_4_flag = (input_channel_1>>10)&0x01; //MCP1-GPB2
-  DOM_slot_1_flag = 1-(input_channel_2>>14)&0x01; //MCP2-GPB6
-  DOM_slot_2_flag = (input_channel_1>>12)&0x01; //MCP1-GPB4
-  DOM_slot_3_flag = (input_channel_1)&0x01; //MCP1-GPA0
-  DOM_slot_4_flag = 1-(input_channel_2>>13)&0x01; //MCP2-GPB5
-
-  //  Serial.print(BIN_slot_1_flag);
-  //  Serial.print(BIN_slot_2_flag);
-  //  Serial.print(BIN_slot_3_flag);
-  //  Serial.print(BIN_slot_4_flag);
-  //  Serial.print(DOM_slot_1_flag);
-  //  Serial.print(DOM_slot_2_flag);
-  //  Serial.print(DOM_slot_3_flag);
-  //  Serial.println(DOM_slot_4_flag);
-
-  // Serial.println(input_channel_1,BIN);
-  // Serial.print("  ");
-  // Serial.println(input_channel_2,BIN);
-
-
-  // Cannot use input from channel_1
-  // DOM_slot_2_flag = (input_channel_2>>8)&0x01;
-
-  /************ Check Basket Detected *************/
-  if(BIN_slot_1_flag==1 && prev_BIN_slot_1_flag==0)
-  {
-    BIN_slot_1_time = current_time;
-  }
-  if(BIN_slot_2_flag==1 && prev_BIN_slot_2_flag==0)
-  {
-    BIN_slot_2_time = current_time;
-  }
-  if(BIN_slot_3_flag==1 && prev_BIN_slot_3_flag==0)
-  {
-    BIN_slot_3_time = current_time;
-  }
-  if(BIN_slot_4_flag==1 && prev_BIN_slot_4_flag==0)
-  {
-    BIN_slot_4_time = current_time;
-  }
-  // if(DOM_slot_1_flag==1 && prev_DOM_slot_1_flag==0)
-  // {
-  //   DOM_slot_1_time = current_time;
-  // }
-  // Reverse logic due to sensor cannot adjust 
-  if(DOM_slot_1_flag==1 && prev_DOM_slot_1_flag==0)
-  {
-    DOM_slot_1_time = current_time;
-  }
-  if(DOM_slot_2_flag==1 && prev_DOM_slot_2_flag==0)
-  {
-    DOM_slot_2_time = current_time;
-  }
-  if(DOM_slot_3_flag==1 && prev_DOM_slot_3_flag==0)
-  {
-    DOM_slot_3_time = current_time;
-  }
-  if(DOM_slot_4_flag==1 && prev_DOM_slot_4_flag==0)
-  {
-    DOM_slot_4_time = current_time;
-  }
-
-  /***** Check Basket Un-Detected and Confirm Basket Passed *****/
-  if(BIN_slot_1_flag==0 && prev_BIN_slot_1_flag==1)
-  {
-    if(current_time-BIN_slot_1_time>JUDGE_TIME_THRESHOLD)
-    {
-      final_BIN_slot_1_flag = 1;
+        // Print status of each sensor (connected to MCP23S17)
+        Serial.print("Sensor ");
+        Serial.print(sensorIndex + 1);  // 1-based index
+        Serial.print(": detection ");
+        Serial.println(detect);  // Detection (1 for detected, 0 for not detected)
     }
-  }
-  if(BIN_slot_2_flag==0 && prev_BIN_slot_2_flag==1)
-  {
-    if(current_time-BIN_slot_2_time>JUDGE_TIME_THRESHOLD)
-    {
-      final_BIN_slot_2_flag = 1;
-    }
-  }
-  if(BIN_slot_3_flag==0 && prev_BIN_slot_3_flag==1)
-  {
-    if(current_time-BIN_slot_3_time>JUDGE_TIME_THRESHOLD)
-    {
-      final_BIN_slot_3_flag = 1;
-    }
-  }
-  if(BIN_slot_4_flag==0 && prev_BIN_slot_4_flag==1)
-  {
-    if(current_time-BIN_slot_4_time>JUDGE_TIME_THRESHOLD)
-    {
-      final_BIN_slot_4_flag = 1;
-    }
-  }
-  // if(DOM_slot_1_flag==0 && prev_DOM_slot_1_flag==1)
-  // {
-  //   if(current_time-DOM_slot_1_time>JUDGE_TIME_THRESHOLD)
-  //   {
-  //     final_DOM_slot_1_flag = 1;
-  //   }
-  // }
 
-  // Reverse logic due to sensor cannot adjust
-  if(DOM_slot_1_flag==0 && prev_DOM_slot_1_flag==1)
-  {
-    if(current_time-DOM_slot_1_time>JUDGE_TIME_THRESHOLD)
-    {
-      final_DOM_slot_1_flag = 1;
-    }
-  }
-  if(DOM_slot_2_flag==0 && prev_DOM_slot_2_flag==1)
-  {
-    if(current_time-DOM_slot_2_time>JUDGE_TIME_THRESHOLD)
-    {
-      final_DOM_slot_2_flag = 1;
-    }
-  }
-  if(DOM_slot_3_flag==0 && prev_DOM_slot_3_flag==1)
-  {
-    if(current_time-DOM_slot_3_time>JUDGE_TIME_THRESHOLD)
-    {
-      final_DOM_slot_3_flag = 1;
-    }
-  }
-  if(DOM_slot_4_flag==0 && prev_DOM_slot_4_flag==1)
-  {
-    if(current_time-DOM_slot_4_time>JUDGE_TIME_THRESHOLD)
-    {
-      final_DOM_slot_4_flag = 1;
-    }
-  }
-  
-  // Check for broken sensors
-  checkForBrokenSensors(current_time);
-  getFlowrackDataFromServer(String(currentHP));
+    // Fetch data from the server
+    Serial.println("Fetching data from server...");
+    String serverResponse = getFlowrackDataFromServer(String(currentHP));
+    if (serverResponse.isEmpty()) {
+        Serial.println("Error: Could not retrieve data from the server.");
+    } else {
+        Serial.println("Server Response: ");
+        Serial.println(serverResponse);
 
+        // Parse the server response (assuming this updates the 'flowrackData' structure)
+        DynamicJsonDocument doc(1024);
+        DeserializationError error = deserializeJson(doc, serverResponse);
 
+        if (error) {
+            Serial.print("Failed to parse JSON: ");
+            Serial.println(error.c_str());
+        } else {
+            JsonArray flowrackArray = doc["data"].as<JsonArray>();
 
-  if (((millis() - lastTime_2) > timerDelay_2))
-  {
-    //http://localhost:4499/flowrack/item_counter?hp=demo&flowrack=domestic&state=1&slot=1
-    String HP = "demo";
-    String flowrack = "binning";
-    int state = 1;
-    int slot = 1;
-    String serverPath = "http://172.20.10.3:4499/flowrack/item_counter";
-    //String url = serverPath + "?hp=" + HP +"&flowrack=" + flowrack +"&state=" + state+"&slot=" + slot ;
-    //POST_https(url);
+            U4 current_time = millis();
+            if ((millis() - lastTime) > timerDelay) {
+                lastTime = millis();
 
-    /*test_counter++;
-    if(test_counter<=3)
-    {
-      state = 1;
-    }
-    else
-    {
-      state = 2;
-    }
-    if(test_counter==6)test_counter = 0;
-    
-    POST_https(serverPath,HP,flowrack,state,slot);*/
+                Serial.println("Photo Sensor Status (Used by Server):");
 
-    /************ Send to Server *************/
-    //POST_https(serverPath,HP,flowrack,state,slot);
-    if(final_BIN_slot_1_flag==1)
-    {
-      POST_https(serverPath,HP,"binning",2,1);
-      final_BIN_slot_1_flag = 0;
-    }
-    if(final_BIN_slot_2_flag==1)
-    {
-      POST_https(serverPath,HP,"binning",2,2);
-      final_BIN_slot_2_flag = 0;
-    }
-    if(final_BIN_slot_3_flag==1)
-    {
-      POST_https(serverPath,HP,"binning",2,3);
-      final_BIN_slot_3_flag = 0;
-    }
-    if(final_BIN_slot_4_flag==1)
-    {
-      POST_https(serverPath,HP,"binning",2,4);
-      final_BIN_slot_4_flag = 0;
-    }
-    if(final_DOM_slot_1_flag==1)
-    {
-      POST_https(serverPath,HP,"domestic",1,1);
-      final_DOM_slot_1_flag = 0;
-    }
-    if(final_DOM_slot_2_flag==1)
-    {
-      POST_https(serverPath,HP,"domestic",1,2);
-      final_DOM_slot_2_flag = 0;
-    }
-    if(final_DOM_slot_3_flag==1)
-    {
-      POST_https(serverPath,HP,"domestic",1,3);
-      final_DOM_slot_3_flag = 0;
-    }
-    if(final_DOM_slot_4_flag==1)
-    {
-      POST_https(serverPath,HP,"domestic",1,4);
-      final_DOM_slot_4_flag = 0;
-    }
-    
+                int sensorIndex = 0;  // Start indexing the sensors globally
 
-    lastTime_2 = millis();
-  }
+                // Iterate over each flowrack from the server
+                for (int i = 0; i < flowrackArray.size(); i++) {
+                    JsonObject flowrack = flowrackArray[i];  // Get the flowrack object
+                    String flowrackName = flowrack["name"]; // Get the flowrack name
+                    JsonArray slotStyle = flowrack["slot_style"]; // Get the slot style array
 
-  // Update previous sensor states
-  prev_BIN_slot_1_flag = BIN_slot_1_flag;
-  prev_BIN_slot_2_flag = BIN_slot_2_flag;
-  prev_BIN_slot_3_flag = BIN_slot_3_flag;
-  prev_BIN_slot_4_flag = BIN_slot_4_flag;
-  prev_DOM_slot_1_flag = DOM_slot_1_flag;
-  prev_DOM_slot_2_flag = DOM_slot_2_flag;
-  prev_DOM_slot_3_flag = DOM_slot_3_flag;
-  prev_DOM_slot_4_flag = DOM_slot_4_flag;
+                    Serial.print("Checking sensors for flowrack: ");
+                    Serial.println(flowrackName);
 
-  Serial.println("Triggered Sensors: ");
-  if(BIN_slot_1_flag == 1) { Serial.println("BIN Slot 1 Triggered"); }
-  if(BIN_slot_2_flag == 1) { Serial.println("BIN Slot 2 Triggered"); }
-  if(BIN_slot_3_flag == 1) { Serial.println("BIN Slot 3 Triggered"); }
-  if(BIN_slot_4_flag == 1) { Serial.println("BIN Slot 4 Triggered"); }
-  if(DOM_slot_1_flag == 1) { Serial.println("DOM Slot 1 Triggered"); }
-  if(DOM_slot_2_flag == 1) { Serial.println("DOM Slot 2 Triggered"); }
-  if(DOM_slot_3_flag == 1) { Serial.println("DOM Slot 3 Triggered"); }
-  if(DOM_slot_4_flag == 1) { Serial.println("DOM Slot 4 Triggered"); }
+                    // Iterate through each row in the slot style (rows of the flowrack)
+                    for (int row = 0; row < slotStyle.size(); row++) {
+                        JsonArray rowArray = slotStyle[row];  // Get each row in the slot style
 
-  delay(1000);
+                        // Calculate row-based sensor start for the current flowrack
+                        for (int col = 0; col < rowArray.size(); col++) {
+                            int sensorState = rowArray[col];  // 1 means sensor working, 0 means not working
+
+                            // Read the sensor state from MCP based on sensorIndex
+                            int detect = 0;
+                            if (sensorIndex < 16) {
+                                detect = (input_channel_1 >> sensorIndex) & 0x01;  // From first MCP
+                            } else if (sensorIndex < 32) {
+                                detect = (input_channel_2 >> (sensorIndex - 16)) & 0x01;  // From second MCP
+                            }
+
+                            // Only process and print for working sensors (sensorState == 1)
+                            if (sensorState == 1) {
+                                String slot = "[" + String(row) + "," + String(col) + "]";  // Slot format
+                                Serial.print("Photo ");
+                                Serial.print(sensorIndex + 1);  // Photo/sensor number (1-based index)
+                                Serial.print(", ");
+                                Serial.print(flowrackName);     // Flowrack type
+                                Serial.print(", state 1, detect ");
+                                Serial.print(detect);  // Detection (1 for detected, 0 for not detected)
+                                Serial.print(", slot ");
+                                Serial.println(slot);  // Slot format [x, y]
+                            }
+
+                            sensorIndex++;  // Move to the next sensor
+                        }
+                    }
+                }
+
+                // Handle the sensor timing and state change logic (if needed)
+                checkForBrokenSensors(current_time);
+            }
+        }
+    }
+
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("WiFi not connected, attempting to reconnect...");
+        Connect_Self_Network();
+    }
+
+    delay(1000);  // Delay for readability
 }
+
+
+
+
 
 void POST_https(String serverURL, String HP, String flowrack, int state, int slot) {    
     String requestPath = serverURL + "?hp=" + HP + "&flowrack=" + flowrack + "&state=" + state + "&slot=" + slot;
@@ -610,7 +445,7 @@ int readHPFromDipSwitch() {
     int pin32 = inputchip2.digitalRead(7); // GPA7 -> Pin 32
 
     int hp = (pin32 << 2) | (pin31 << 1) | pin30; // Binary to decimal conversion
-    hp = 1; // example
+    // hp = 1; // example 
     Serial.print("DIP Switch Channel: ");  
     Serial.print("Pin30: "); Serial.print(pin30);  
     Serial.print(" Pin31: "); Serial.print(pin31);  
@@ -657,18 +492,23 @@ String getFlowrackDataFromServer(String HP) {
 }
 
 void parseFlowrackData(String jsonData) {
+    if (jsonData.isEmpty()) {
+        Serial.println("Empty server response, cannot parse JSON.");
+        return;
+    }
+
     DynamicJsonDocument doc(1024);
     DeserializationError error = deserializeJson(doc, jsonData);
 
     if (error) {
-        Serial.println("JSON deserialization failed");
+        Serial.println("JSON deserialization failed:");
         Serial.println(error.c_str());  // Print the error message
         return;
     }
 
-    // Debug: Print the entire JSON object to see its structure
-    serializeJsonPretty(doc, Serial);
-    
+    // If JSON is valid, continue with flowrack data parsing
+    serializeJsonPretty(doc, Serial);  // Debug: print parsed JSON
+
     if (doc.containsKey("data")) {  // Ensure the key exists
         JsonArray flowracks = doc["data"];
         int totalFlowrackTypes = flowracks.size();  // Number of flowrack types
@@ -688,6 +528,7 @@ void parseFlowrackData(String jsonData) {
 
 
 
+
 void assignSensorsToFlowrack(String flowrackType, int flowrackIndex, int totalFlowrackTypes) {
     // Each flowrack type will use 4 sensors
     int sensorsPerType = 4;  // Fixed to 4 sensors per flowrack type
@@ -699,33 +540,14 @@ void assignSensorsToFlowrack(String flowrackType, int flowrackIndex, int totalFl
         sensorEnd = 28; // Limit the total number of sensors to 28
     }
 
-    // Assign sensors for each flowrack type
+    // Assign sensors dynamically to flowrack types
     for (int i = sensorStart; i < sensorEnd; i++) {
         Serial.print("Assigning sensor ");
-        Serial.print(i + 1);  // Sensor numbers start at 1, so i+1
+        Serial.print(i + 1);
         Serial.print(" to flowrack type: ");
         Serial.println(flowrackType);
-
-        // Here you can also map to coordinates if needed, like:
-        // Map coordinates based on sensor position in the set
-        // int coordX = (i % 2);  // Alternates between 0 and 1 for X coordinate
-        // int coordY = (i / 2);  // Alternates for Y coordinate
-        // Serial.print("Coordinates: [");
-        // Serial.print(coordX);
-        // Serial.print(", ");
-        // Serial.print(coordY);
-        // Serial.println("]");
-
-        // Assuming "HP" is stored in a global or retrieved variable
-        int state = 1; // Example state, you can set this based on your logic
-        int slot = i + 1; // Sensor slot is i+1
-
-        // Send HTTP POST request to assign sensor to flowrack type
-        POST_https(serverPostURL, String(currentHP), flowrackType, state, slot);
     }
 }
-
-
 
 
 
