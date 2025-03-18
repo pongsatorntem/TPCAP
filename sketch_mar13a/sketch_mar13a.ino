@@ -33,7 +33,7 @@ MCP inputchip2(0, D1); // Instantiate an object called "outputchip" on an MCP23S
 const char *ssid = "AMR_TDEM_2.4G";
 const char *password = "1234@abcd";
 const char *serverIP = "192.168.1.13"; // Server IP address
-byte flowrackIp[4] = {192, 168, 1, 63};  // สุ่มเลขไม่ให้ซ้ำ
+byte flowrackIp[4] = {192, 168, 1, 203};  // สุ่มเลขไม่ให้ซ้ำ
 byte gateway[4] = {192, 168, 1, 2};
 byte subnet[4] = {255, 255, 255, 0};
 const char *serverPort = "4499"; // Server port
@@ -311,17 +311,28 @@ public:
     }
   }
 
-  bool shouldSendReleaseHoldFlg(U64 currentTimestamp, int photoState) // แก้ฟังชั่นนี้ 17 Mar แบบไม่ได้ลองรัน
+  bool shouldSendReleaseHoldFlg(U64 currentTimestamp)
   {
-    if (photoState == PHOTO_OFF) 
+    DEBUG_SERIAL.print("📌 Checking shouldSendReleaseHoldFlg | PHOTO STATE: ");
+    DEBUG_SERIAL.println(this->currentSensorState);
+    DEBUG_SERIAL.print("🕒 Time Diff: ");
+    DEBUG_SERIAL.println(currentTimestamp - this->currentTimestamp);
+    DEBUG_SERIAL.print("📌 Request State: ");
+    DEBUG_SERIAL.println(this->requestState);
+
+    if (this->currentSensorState == PHOTO_OFF)
     {
+        DEBUG_SERIAL.println("✅ PHOTO_OFF detected! Sending NO_HOLD.");
         return true;
     }
     if (this->requestState == REQUEST_HOLD &&
         (currentTimestamp - this->currentTimestamp > SENSOR_HOLD_CHECKED))
     {
+        DEBUG_SERIAL.println("✅ Hold timeout reached! Sending NO_HOLD.");
         return true;
     }
+
+    DEBUG_SERIAL.println("❌ NO_HOLD condition not met yet.");
     return false;
   }
 
@@ -522,12 +533,14 @@ void handlePhotoState(U2 input_channel_1, U2 input_channel_2, U64 currentTimesta
         }
         else if (transferType == SLOT_RECEIVE_TYPE)
         {
-          // Release hold flg
-          if (SlotObj->shouldSendReleaseHoldFlg(currentTimestamp, photoState)) // เพิ่มตรงนี้ วันที่ 17 Mar
+          if (photoState == PHOTO_OFF) // กล่องออกไปแล้ว
           {
-            // Send count up to server
-            asyncPostHTTP(flowrackName, NO_HOLD, row, col);
-            SlotObj->setRequestState(NO_REQUEST);
+              if (SlotObj->shouldSendReleaseHoldFlg(currentTimestamp))
+              {
+                  DEBUG_SERIAL.println("✅ Sending NO_HOLD to clear FULL state.");
+                  asyncPostHTTP(flowrackName, NO_HOLD, row, col);
+                  SlotObj->setRequestState(NO_REQUEST);
+              }
           }
         }
       }
