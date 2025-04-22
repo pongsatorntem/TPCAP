@@ -12,7 +12,6 @@ typedef bool BL;
 
 
 
-
 #ifdef DEBUG
   #define DEBUG_SERIAL Serial
 #else
@@ -194,7 +193,9 @@ BL prev_DOM_slot_4_flag = 0;
 
 WiFiClient client;
 
-
+extern "C" {
+  #include "umm_malloc/umm_malloc.h"
+}
 
 const int interruptInterval = 2000; // Interval in milliseconds
 volatile bool interruptFlag = false;
@@ -246,6 +247,11 @@ private:
   int activeRequests = 0;  // 🔁 ตัวนับ requests ที่ยังไม่จบ
 
 public:
+
+  bool isSlotBusy() {
+    return this->getIsSendingCountUp() || this->getIsSendingHold() || this->getIsSendingNoHold() || this->getIsSendingPost();
+  }
+
 
   // ✅ ใช้ enum ที่ถูกต้อง
   RequestCounterState lastRoundRobinState;
@@ -783,12 +789,15 @@ void loop()
 
   if (millis() - lastHeapCheck > 30000) {
     int currentHeap = ESP.getFreeHeap();
+    printHeapFragmentation();
+
     if (currentHeap < 2000 && abs(currentHeap - lastHeap) < 100) {
       DEBUG_SERIAL.println("❌ Heap stuck or low. Rebooting...");
       ESP.restart();
     }
     lastHeapCheck = millis();
     lastHeap = currentHeap;
+
   }
 
   // ✅ ตรวจ activeRequests ค้างนานเกิน 15 วินาที พร้อมล้าง flags
@@ -1296,6 +1305,14 @@ void asyncPostHTTP(String flowrack, RequestCounterState state, int row, int col,
   delay(10 + random(20));  // 🧘 ลด burst
   yield();
 
+
+  if (ESP.getFreeHeap() < 15000) {
+    DEBUG_SERIAL.printf("❌ Fragmented heap (%d). Cannot allocate large block.\n", ESP.getMaxFreeBlockSize());
+    failedRequests.push_back(RetryPacket(jsonPayload, 0));
+    return;
+  }
+
+
   AsyncHTTPRequest *request = new AsyncHTTPRequest();
   if (!request) {
     DEBUG_SERIAL.println("❌ Failed to allocate request object.");
@@ -1508,3 +1525,21 @@ void setupOTA()
 
   ArduinoOTA.begin();
 }
+
+void printHeapFragmentation() {
+  UMM_HEAP_INFO heapInfo;
+  umm_info(&heapInfo, 0);
+
+  size_t freeHeap = ESP.getFreeHeap();
+  size_t maxBlock = ESP.getMaxFreeBlockSize();
+
+  if (freeHeap == 0) {
+    DEBUG_SERIAL.println("⚠️ Heap not available");
+    return;
+  }
+
+  float fragmentation = 100.0 * (1.0 - ((float)maxBlock / (float)freeHeap));
+  DEBUG_SERIAL.printf("📉 [FRAGMENTATION] %.1f%% | Free: %d | Max Block: %d\n",
+                      fragmentation, freeHeap, maxBlock);
+}
+
