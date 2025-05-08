@@ -32,7 +32,7 @@ typedef bool BL;
 #include <map>
 // #include <WebSerial.h>
 #include <stdlib.h>  // สำหรับ random()
-
+U64 lastItemInBatchSent = 0;
 
 // Define SPI pins specifically for ESP8266
 // #define SCK_PIN D5   // Serial Clock
@@ -49,7 +49,7 @@ MCP inputchip2(0, D1); // Instantiate an object called "outputchip" on an MCP23S
 const char *ssid = "AMR_TDEM";
 const char *password = "1234@abcd";
 const char *serverIP = "192.168.1.13"; // Server IP address
-byte flowrackIp[4] = {192, 168, 1, 92};  // สุ่มเลขไม่ให้ซ้ำ /จภ
+byte flowrackIp[4] = {192, 168, 1, 98};  // สุ่มเลขไม่ให้ซ้ำ /จภ
 byte gateway[4] = {192, 168, 1, 2};
 byte subnet[4] = {255, 255, 255, 0};
 const char *serverPort = "4499"; // Server port
@@ -436,11 +436,12 @@ public:
       if (currentTimeStamp - this->currentTimestamp > SENSOR_CHANGE_CHECK_DELAY)
       {
           if (abs(photoState - this->currentSensorState) == 1) {
-              if (currentTimeStamp - this->previousTimestamp < 50 || currentTimeStamp - this->currentTimestamp < 50) {
-                  DEBUG_SERIAL.println("⏱ Debounce: flip too fast (dual check)");
+              if (currentTimeStamp - this->previousTimestamp < 100) {
+                  DEBUG_SERIAL.println("⏱ Debounce blocked fast flip (<100ms)");
                   return false;
               }
           }
+
           return true;
       }
       return false;
@@ -465,7 +466,7 @@ public:
           return false;
 
       // 🕒 คำนวณเวลาที่กล่องอยู่
-      U64 holdDuration = currentTimestamp - this->previousTimestamp;
+      U64 holdDuration = currentTimestamp - this->currentTimestamp;
       if (holdDuration > SENSOR_HOLD_CHECKED && holdDuration > 1000)
       {
           // ✅ แสดง log แค่ครั้งเดียวทุก 2 วิ
@@ -627,6 +628,23 @@ U1 allSlotCount = 0; // ✅ เหมือนเดิม
 
 
 
+struct RetryPacket {
+  String payload;
+  int retryCount;
+  U64 lastTriedTime;
+
+  RetryPacket(String p, int c = 0, U64 t = 0) : payload(p), retryCount(c), lastTriedTime(t) {}
+};
+
+
+std::vector<RetryPacket> failedRequests;  // ✅ ใช้ struct ใหม่แทน
+bool allowRetryDrain = false;
+
+int httpErrorMinus4Count = 0;
+const int MAX_HTTP_MINUS4_BEFORE_REBOOT = 6;
+
+
+
 
 void setup()
 {
@@ -663,7 +681,7 @@ void setup()
   String jsonData = getFlowrackDataFromServer(String(currentHP));
 
   // Parse the server response (assuming this updates the 'flowrackData' structure)
-  DynamicJsonDocument doc(1024);
+  DynamicJsonDocument doc(512);
   DeserializationError error = deserializeJson(doc, jsonData);
 
   if (!error)
@@ -702,7 +720,7 @@ void setup()
     }
     DEBUG_SERIAL.printf("✅ Total slots: %d\n", allSlotCount);
     DEBUG_SERIAL.printf("📊 Heap after creating slots: %d bytes\n", ESP.getFreeHeap());
-
+    allowRetryDrain = true;  // ✅ เปิดให้ retryFailedRequests ทำงาน
   }
   else
   {
@@ -711,21 +729,8 @@ void setup()
 
 }
 
-struct RetryPacket {
-  String payload;
-  int retryCount;
-  U64 lastTriedTime;
-
-  RetryPacket(String p, int c = 0, U64 t = 0) : payload(p), retryCount(c), lastTriedTime(t) {}
-};
-
-std::vector<RetryPacket> failedRequests;  // ✅ ใช้ struct ใหม่แทน
-int httpErrorMinus4Count = 0;
-const int MAX_HTTP_MINUS4_BEFORE_REBOOT = 6;
 
 
-
-bool allowRetryDrain = false;
 
 
 
@@ -774,10 +779,10 @@ void loop()
     digitalWrite(LED_BUILTIN, HIGH);
   }
 
-  if (millis() % 10000 < 100) {
-    DEBUG_SERIAL.print("📊 Free Heap: ");
-    DEBUG_SERIAL.println(ESP.getFreeHeap());
-  }
+  // if (millis() % 10000 < 100) {
+  //   DEBUG_SERIAL.print("📊 Free Heap: ");
+  //   DEBUG_SERIAL.println(ESP.getFreeHeap());
+  // }
 
   
   static U64 lastWiFiDebug = 0;
@@ -799,15 +804,16 @@ void loop()
 
   if (millis() - lastHeapCheck > 30000) {
     int currentHeap = ESP.getFreeHeap();
+    int maxBlock = ESP.getMaxFreeBlockSize();
     printHeapFragmentation();
 
-    if (currentHeap < 2000 && abs(currentHeap - lastHeap) < 100) {
-      DEBUG_SERIAL.println("❌ Heap stuck or low. Rebooting...");
+    if ((currentHeap < 3000 && abs(currentHeap - lastHeap) < 100) || maxBlock < 4000) {
+      DEBUG_SERIAL.printf("💣 Heap stuck or fragmented (heap=%d, maxBlock=%d). Rebooting...\n", currentHeap, maxBlock);
       ESP.restart();
     }
+
     lastHeapCheck = millis();
     lastHeap = currentHeap;
-
   }
 
   // ✅ ตรวจ activeRequests ค้างนานเกิน 15 วินาที พร้อมล้าง flags
@@ -885,6 +891,7 @@ U4 roundRobinIndex = 0;
 
 void handlePhotoState(U2 input_channel_1, U2 input_channel_2, U64 currentTimestamp) {
   // ✅ Check MCP valid
+
   U64 mcpStart = millis();
   while ((input_channel_1 == 0xFFFF && input_channel_2 == 0xFFFF) && millis() - mcpStart < 100) {
     input_channel_1 = ~inputchip1.digitalRead() & 0xffff;
@@ -901,11 +908,13 @@ void handlePhotoState(U2 input_channel_1, U2 input_channel_2, U64 currentTimesta
 
 
   U4 inputMergeChannel = (input_channel_2 << 16) | input_channel_1;
+  static std::vector<Slot*> pendingItemInSlots;  // ✅ ตำแหน่งถูกต้อง
 
   static std::map<int, int> rapidOnCount;
   static std::map<int, U64> lastRapidTime;
   static std::map<int, U64> lastStuckLogTime;
   static std::map<int, U64> lastCountUpRetryTime;
+
 
   bool allowRoundRobin = (millis() - lastRoundRobinTime >= 30000);
 
@@ -960,7 +969,19 @@ void handlePhotoState(U2 input_channel_1, U2 input_channel_2, U64 currentTimesta
 
     // ✅ Sensor changed
     if (slot->isSensorStateChanged(photoState, currentTimestamp)) {
-
+      // ✅ FULL: Immediate send if sensor was 0 → 1 and now ON >10s
+      if (transferType == SLOT_RECEIVE_TYPE && photoState == PHOTO_ON) {
+        U64 heldDuration = currentTimestamp - slot->getCurrentTimestamp();
+        if (!slot->getIsSendingHold() && heldDuration > 10000 && slot->canPostNow()) {
+          DEBUG_SERIAL.printf("🚀 FULL DETECTED (Hold>10s): %s [%d,%d] = ON for %.1fs\n",
+                              flowrackName.c_str(), row, col, heldDuration / 1000.0);
+          slot->setIsSendingHold(true);
+          slot->setIsSendingNoHold(false);
+          slot->updateLastPostTime();
+          slot->setIsSendingPost(true);
+          asyncPostHTTP(flowrackName, HOLD, row, col);
+        }
+      }
 
       DEBUG_SERIAL.printf("🧐 Sensor CHANGED [%s %d,%d] rIndex=%d | %d → %d\n",
                           flowrackName.c_str(), row, col, rIndex,
@@ -985,6 +1006,16 @@ void handlePhotoState(U2 input_channel_1, U2 input_channel_2, U64 currentTimesta
       DEBUG_SERIAL.printf("📌 [setPhotoState] Sensor [%s %d,%d] changed to %s\n",
                           flowrackName.c_str(), row, col,
                           (photoState == PHOTO_ON ? "ON" : "OFF"));
+      
+      // ✅ ITEM_IN สำหรับ RECEIVE slot เมื่อเปลี่ยนจาก 0 → 1
+      if (transferType == SLOT_RECEIVE_TYPE && slot->getPreviousSensorState() == PHOTO_OFF && photoState == PHOTO_ON) {
+        if (!slot->getIsSendingPost() && slot->canPostNow() && activeRequests < MAX_ACTIVE_REQUESTS - 1) {
+          slot->markItemInTime(currentTimestamp);  // 🧠 จดเวลา ITEM_IN
+          slot->setIsSendingPost(true);            // 🔐 ป้องกัน POST ซ้อน
+          asyncPostHTTP(flowrackName, ITEM_IN, row, col);  // ✅ ส่งทันที
+          DEBUG_SERIAL.printf("📤 [ITEM_IN] Sent immediately: %s [%d,%d]\n", flowrackName.c_str(), row, col);
+        }
+      }
 
       DEBUG_SERIAL.printf("🧪 [Sensor ON Detected] rIndex %d | tsDiff=%.1f ms\n", rIndex, tsDiff * 1.0);
 
@@ -1034,55 +1065,61 @@ void handlePhotoState(U2 input_channel_1, U2 input_channel_2, U64 currentTimesta
 
         if (transferType == SLOT_RECEIVE_TYPE && slot->canPostNow() && !slot->getIsSendingPost() && activeRequests < MAX_ACTIVE_REQUESTS - 1  &&
           (currentTimestamp - slot->getPreviousTimestamp()) > 200) {
-          slot->updateLastPostTime();
-          slot->markItemInTime(currentTimestamp);  // ✅ บันทึกเวลา ITEM_IN
-          slot->setIsSendingPost(true);  // ✅ ป้องกัน POST ซ้อน
-
-          // ✅ เพิ่ม debug ตรงนี้
-          DEBUG_SERIAL.printf("🚨 [ITEM_IN Debug] sensorIndex=%d | photoState=%d | prev=%d | ts_diff=%llu\n",
-            slot->getReadIndex(),
-            photoState,
-            slot->getPreviousSensorState(),
-            tsDiff
-
-          );
-
-
-          DEBUG_SERIAL.printf("📥 [RECEIVE_TYPE] ITEM_IN: %s [%d,%d]\n", flowrackName.c_str(), row, col);
-          slot->setIsSendingPost(true);  // ✅ ป้องกัน POST ซ้อน
-          asyncPostHTTP(flowrackName, ITEM_IN, row, col);
-          if (activeRequests < 2) delay(10);  // ✅ AMR ส่งรัวได้ไวขึ้น
-          yield();
+          // 👉 เก็บไว้ก่อน ยังไม่ส่งทันที
+            slot->markItemInTime(currentTimestamp);  // 🧠 จดเวลา ITEM_IN
+            slot->setIsSendingPost(true);  // 🔐 ป้องกันซ้อน
+            asyncPostHTTP(flowrackName, ITEM_IN, row, col);  // ทันที
+            //pendingItemInSlots.push_back(slot);
+            DEBUG_SERIAL.printf("⏳ [ITEM_IN Queued] %s [%d,%d] → pendingItemInSlots=%d\n",
+                                flowrackName.c_str(), row, col, pendingItemInSlots.size());
+          
         }
 
       } else {
-        // ✅ Sensor OFF → NO_HOLD
         if (transferType == SLOT_RECEIVE_TYPE && slot->shouldSendReleaseHoldFlg(currentTimestamp)) {
           if (!slot->getIsSendingNoHold() && slot->canPostNow() && activeRequests < 3) {
-            slot->setIsSendingNoHold(true);
-            slot->setIsSendingHold(false);
-            slot->updateLastPostTime();
-            DEBUG_SERIAL.printf("✅ Slot is free! Sending NO_HOLD.\n");
-            asyncPostHTTP(flowrackName, NO_HOLD, row, col);
+            U64 elapsedSinceOff = currentTimestamp - slot->getPreviousTimestamp();
+            if (elapsedSinceOff >= 10000) {  // ❗ หน่วง 10 วินาที
+              slot->setIsSendingNoHold(true);
+              slot->setIsSendingHold(false);
+              slot->updateLastPostTime();
+              DEBUG_SERIAL.printf("✅ Slot is free for 10s! Sending NO_HOLD.\n");
+              asyncPostHTTP(flowrackName, NO_HOLD, row, col);
+            } else {
+              DEBUG_SERIAL.printf("⏳ Waiting NO_HOLD: %s [%d,%d] %.1fs\n",
+                                  flowrackName.c_str(), row, col, elapsedSinceOff / 1000.0);
+            }
           }
         }
+
       }
     }
 
-    // ✅ Check for HOLD
-    if (transferType == SLOT_RECEIVE_TYPE && slot->shouldSendHoldFlg(currentTimestamp)) {
-      if (!slot->getIsSendingHold() && slot->canPostNow() && !slot->getIsSendingPost() && activeRequests < 3) {
+    if (transferType == SLOT_RECEIVE_TYPE && photoState == PHOTO_ON) {
+      U64 heldDuration = currentTimestamp - slot->getCurrentTimestamp();  // ✅ ใช้ currentTimestamp ที่เซ็ตใน setPhotoState()
+      if (!slot->getIsSendingHold() && heldDuration >= 10000 && slot->canPostNow() && activeRequests < 3) {
         slot->setIsSendingHold(true);
         slot->setIsSendingNoHold(false);
         slot->updateLastPostTime();
-        slot->setIsSendingPost(true);  // ✅ ป้องกัน POST ซ้อน
-        DEBUG_SERIAL.printf("✅ HOLD condition met! Sending FULL signal.\n");
-        slot->setIsSendingPost(true);
-
+        DEBUG_SERIAL.printf("🚀 FULL DETECTED (Hold>10s): %s [%d,%d] = ON for %.1fs\n",
+                            flowrackName.c_str(), row, col, heldDuration / 1000.0);
         asyncPostHTTP(flowrackName, HOLD, row, col);
       }
     }
 
+    if (pendingItemInSlots.size() >= 4 && activeRequests < MAX_ACTIVE_REQUESTS - 2) {
+      for (int i = 0; i < 4 && i < pendingItemInSlots.size(); ++i) {
+        Slot* slot = pendingItemInSlots[i];
+        String flowrackName = slot->getFlowrackName();
+        int row = slot->getRow();
+        int col = slot->getCol();
+        asyncPostHTTP(flowrackName, ITEM_IN, row, col);
+        DEBUG_SERIAL.printf("📥 [ITEM_IN Sent] %s [%d,%d]\n", flowrackName.c_str(), row, col);
+        delay(10);
+        yield();
+      }
+      pendingItemInSlots.erase(pendingItemInSlots.begin(), pendingItemInSlots.begin() + 4);
+    }
     yield();
   }
 
@@ -1106,9 +1143,9 @@ void handlePhotoState(U2 input_channel_1, U2 input_channel_2, U64 currentTimesta
       int row = slot->getRow();
       int col = slot->getCol();
 
-      DEBUG_SERIAL.printf("📊 [RoundRobin] Checking %s [%d,%d] = %s\n",
-                          flowrackName.c_str(), row, col,
-                          (photoState == PHOTO_ON ? "Full" : "NoFull"));
+      // DEBUG_SERIAL.printf("📊 [RoundRobin] Checking %s [%d,%d] = %s\n",
+      //                     flowrackName.c_str(), row, col,
+      //                     (photoState == PHOTO_ON ? "Full" : "NoFull"));
 
 
         // 🧪 เพิ่ม log ค้าง ON นานเท่าไหร่
@@ -1138,7 +1175,7 @@ void handlePhotoState(U2 input_channel_1, U2 input_channel_2, U64 currentTimesta
           lastRoundRobinTime = millis();
           break;
         } else {
-          DEBUG_SERIAL.printf("🔁 [RoundRobin] Already sent same %s recently → Skip: %s [%d,%d]\n", statusText, flowrackName.c_str(), row, col);
+          // DEBUG_SERIAL.printf("🔁 [RoundRobin] Already sent same %s recently → Skip: %s [%d,%d]\n", statusText, flowrackName.c_str(), row, col);
         }
       } else {
         DEBUG_SERIAL.printf("⏳ [RoundRobin] Skipped due to pacing or activeRequests: %s [%d,%d]\n", flowrackName.c_str(), row, col);
@@ -1257,7 +1294,7 @@ void connectNetwork_safe() {
     DEBUG_SERIAL.println("⚠️ No preferred SSID found. Connecting using default.");
     WiFi.begin(ssid, password);
   }
-
+  
   int retry = 0;
   DEBUG_SERIAL.print("⏳ Connecting");
   while (WiFi.status() != WL_CONNECTED && retry < 20) {
@@ -1334,6 +1371,9 @@ U4 requestCounterId = 1;  // เริ่มต้นที่ 1 ทุกคร
 // ---------------------- CONFIG ----------------------
 
 void asyncPostHTTP(String flowrack, RequestCounterState state, int row, int col, bool allowRetry) {
+  if (ESP.getFreeHeap() < 12000) return;
+  if (ESP.getMaxFreeBlockSize() < 4000) return;
+
   if (inputchip1.digitalRead() == 0xFFFF && inputchip2.digitalRead() == 0xFFFF) {
     DEBUG_SERIAL.println("⚠️ MCP23S17 not detected! Skipping HTTP request...");
     return;
@@ -1376,6 +1416,8 @@ void asyncPostHTTP(String flowrack, RequestCounterState state, int row, int col,
     DEBUG_SERIAL.println("🧠 Heap too low. Skip request.");
     return;
   }
+  
+  DEBUG_SERIAL.printf("📊 Heap before request: %d (max block: %d)\n", ESP.getFreeHeap(), ESP.getMaxFreeBlockSize());
 
   AsyncHTTPRequest *request = new AsyncHTTPRequest();
   if (!request) {
@@ -1430,6 +1472,7 @@ void asyncPostHTTP(String flowrack, RequestCounterState state, int row, int col,
   delay(20 + random(30)); yield();
 
   bool success = request->send(buffer);
+  delay(5); yield();  // ✅ ป้องกัน heap ค้างหลัง send()
 
   String shortPayload = String(buffer).substring(0, 100);
   if (strlen(buffer) > 100) shortPayload += "...";
@@ -1477,10 +1520,18 @@ void retryFailedRequests() {
     return;
   }
 
+  if (ESP.getFreeHeap() < 12000 || ESP.getMaxFreeBlockSize() < 4000) {
+    failedRequests.push_back({packet.payload, packet.retryCount + 1});
+    return;
+  }
+
   DEBUG_SERIAL.println("===================================");
   DEBUG_SERIAL.println("♻️ [RETRY POST] Retrying failed request:");
   DEBUG_SERIAL.printf("📤 Payload: %s\n", packet.payload.c_str());
   DEBUG_SERIAL.println("-----------------------------------");
+
+
+  DEBUG_SERIAL.printf("📊 [RETRY] Heap before request: %d (max block: %d)\n", ESP.getFreeHeap(), ESP.getMaxFreeBlockSize());
 
   AsyncHTTPRequest *request = new AsyncHTTPRequest();
   request->setTimeout(5000);
