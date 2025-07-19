@@ -5,6 +5,20 @@ from scipy.fft import fft, fftfreq, ifft
 from scipy.signal import welch,spectrogram,butter, filtfilt,savgol_filter
 import cv2
 from scipy.interpolate import interp1d
+from collections import defaultdict
+
+##### SELECTION ########### SELECTION ########### SELECTION ########### SELECTION ######
+
+trace_color = "yellow"   # → เปลี่ยนเป็น "blue" ถ้าจะเลือกเส้นสีฟ้า
+image_path = r"D:\WORK_PYTHON\NOISE\FFT\r100c100pf.PNG"
+fs = 50000  # Sampling frequency (Hz)
+normalize_v = 3.3
+cutoff_freq = 100  # Hz
+R = 100     
+C = 100e-12   
+##### SELECTION ########### SELECTION ########### SELECTION ########### SELECTION ######
+
+
 
 
 def bandpass_filter(data, lowcut, highcut, fs, order=4):
@@ -14,12 +28,6 @@ def bandpass_filter(data, lowcut, highcut, fs, order=4):
     b, a = butter(order, [low, high], btype='band')
     return filtfilt(b, a, data)
 
-trace_color = "yellow"   # → เปลี่ยนเป็น "blue" ถ้าจะเลือกเส้นสีฟ้า
-# === Load waveform from image ===
-image_path = r"D:\WORK_PYTHON\NOISE\FFT\r100c100pf.PNG"
-fs = 20000  # Sampling frequency (Hz)
-normalize_v = 3.3
-
 # ========== [1] Load image and extract trace ==========
 img = cv2.imread(image_path)
 if img is None:
@@ -28,7 +36,7 @@ if img is None:
 hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
 if trace_color == "yellow":
-    lower = np.array([20, 100, 100])
+    lower = np.array([15, 80, 80])
     upper = np.array([40, 255, 255])
 elif trace_color == "blue":
     lower = np.array([90, 100, 100])
@@ -41,21 +49,50 @@ points = np.column_stack(np.where(mask > 0))
 x_vals = points[:, 1]
 y_vals = img.shape[0] - points[:, 0]  # flip vertically
 
-# Interpolate y ตาม x
-x_unique = np.unique(x_vals)
-y_interp_raw = [np.mean(y_vals[x_vals == x]) for x in x_unique]
-# สร้าง interpolation function (linear/cubic ก็ได้)
-interp_func = interp1d(x_unique, y_interp_raw, kind='cubic')
-# กำหนดจำนวนจุดใหม่ให้ละเอียดขึ้น (เช่น 2000 จุด)
-new_x = np.linspace(x_unique.min(), x_unique.max(), fs)
+# === Enhance X/Y to Keep All Spikes ===
+x_dict = defaultdict(list)
+for x, y in zip(x_vals, y_vals):
+    x_dict[x].append(y)
+
+x_enhanced = []
+y_enhanced = []
+for x in sorted(x_dict.keys()):
+    y_group = x_dict[x]
+    for y in y_group:
+        jittered_x = x + np.random.uniform(-0.1, 0.1)  # เลื่อน x นิดหน่อยให้ไม่ซ้ำ
+        x_enhanced.append(jittered_x)
+        y_enhanced.append(y)
+
+x_enhanced = np.array(x_enhanced)
+y_enhanced = np.array(y_enhanced)
+
+# === Interpolate Trace ===
+interp_func = interp1d(x_enhanced, y_enhanced, kind='linear', fill_value="extrapolate")
+new_x = np.linspace(x_enhanced.min(), x_enhanced.max(), fs)
 y_interp = interp_func(new_x)
+
+
+
+# === Plot Overlay ===
+plt.figure("Overlay: Image + Trace Points", figsize=(12, 5))
+plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+plt.title("Overlay: Image + Trace Points")
+plt.axis("off")
+
+plt.scatter(x_vals, img.shape[0] - y_vals, color='cyan', s=1, label="Masked Trace")
+plt.plot(new_x, img.shape[0] - y_interp, color='red', linewidth=1.2, label="Interpolated Trace")
+
+plt.legend(loc="lower right")
+plt.tight_layout()
+
+
 
 
 
 
 # Normalize y ให้เป็นโวลต์ (0–3.3V)
 voltage_v = np.array(y_interp)
-voltage_v = (voltage_v - voltage_v.min()) / (voltage_v.max() - voltage_v.min()) * normalize_v
+# # # voltage_v = (voltage_v - voltage_v.min()) / (voltage_v.max() - voltage_v.min()) * normalize_v
 
 
 # สร้างแกนเวลา
@@ -74,14 +111,14 @@ freq_resolution = fs / N          # ความละเอียดของ�
 filtered_v = voltage_v
 
 
-# แสดงให้ดูว่าหลัง filter เหลือแค่ noise
-plt.figure("Filtered Noise", figsize=(10, 4))
-plt.plot(time_s, filtered_v, color='red')
-plt.title("Filtered High-Frequency Noise (1000–4500 Hz)")
-plt.xlabel("Time (s)")
-plt.ylabel("Voltage (V)")
-plt.grid(True)
-plt.tight_layout()
+# # # แสดงให้ดูว่าหลัง filter เหลือแค่ noise
+# # plt.figure("Filtered Noise", figsize=(10, 4))
+# # plt.plot(time_s, filtered_v, color='red')
+# # plt.title("Filtered High-Frequency Noise (1000–4500 Hz)")
+# # plt.xlabel("Time (s)")
+# # plt.ylabel("Voltage (V)")
+# # plt.grid(True)
+# # plt.tight_layout()
 
 
 #------------------------------------------------------------------------------------------------------------
@@ -168,6 +205,25 @@ plt.xlabel("Time (s)")
 plt.colorbar(label='Power (dB)')
 plt.ylim(0, nyquist)
 plt.tight_layout()
+
+# === 🔍 Optional: Zoom STFT เฉพาะช่วง 3–10 kHz ===
+do_zoom_stft = True
+
+if do_zoom_stft:
+    zoom_low = 3000     # Hz
+    zoom_high = 10000   # Hz
+
+    plt.figure("STFT Zoomed", figsize=(10, 4))
+    plt.pcolormesh(t_stft, f_stft, 10 * np.log10(Sxx), shading='gouraud', cmap='inferno')
+    plt.title("STFT Spectrogram (Zoom)")
+    plt.ylabel("Frequency (Hz)")
+    plt.xlabel("Time (s)")
+    plt.ylim(zoom_low, zoom_high)
+    plt.colorbar(label='Power (dB)')
+    plt.grid(True)
+    plt.tight_layout()
+
+
 # === 6. Optional: Save/Print Top Frequencies ===
 fft_df = pd.DataFrame({
     "Frequency (Hz)": positive_freqs,
@@ -181,6 +237,10 @@ top_peaks = fft_df.sort_values("Amplitude", ascending=False).head(10)
 
 #/////////////////////////////////////////////////////////////////// noise filter and invert to T-domain
 
+
+fc = 1 / (2 * np.pi * R * C)   # Cutoff frequency (Hz)
+print(f"RC Filter Cutoff Frequency = {fc:.2f} Hz (from R = {R} Ω, C = {C} F)")
+
 # === Butterworth Low-Pass Filter ===
 def lowpass_filter(data, cutoff, fs, order=4):
     nyq = 0.5 * fs
@@ -189,26 +249,31 @@ def lowpass_filter(data, cutoff, fs, order=4):
     return filtfilt(b, a, data)
 
 
-sg_filtered = savgol_filter(voltage_v, window_length=51, polyorder=2)
-# plt.figure("Savitzky-Golay Filter", figsize=(10, 4))
-# plt.plot(time_s, voltage_v, label='Original', alpha=0.5)
-# plt.plot(time_s, sg_filtered, label='Savitzky-Golay', color='green')
-# plt.title("Savitzky-Golay Filter Result")
-# plt.xlabel("Time (s)")
-# plt.ylabel("Voltage (V)")
-# plt.legend()
-# plt.grid(True)
-# plt.tight_layout()
+# === 1. Apply Low-pass Filter to Keep <500 Hz ===
+lpf_filtered = lowpass_filter(voltage_v, cutoff=cutoff_freq, fs=fs)
 
-# กรองที่ 500 Hz
-lpf_filtered = lowpass_filter(voltage_v, cutoff=50, fs=fs)
-plt.figure("Low-Pass Filter (Time Domain)", figsize=(10, 4))
-plt.plot(time_s, voltage_v, label="Original", color='gray')
-plt.plot(time_s, lpf_filtered, label="Low-Pass < ....Hz", color='blue')
-plt.title("Low-Pass Filter Result")
+# === 2. Calculate the "Removed High-Frequency" Component
+removed_highfreq = voltage_v - lpf_filtered
+
+# === 3. Plot Result ===
+plt.figure("Low-Pass Filter at 500 Hz", figsize=(12, 6))
+
+plt.subplot(2, 1, 1)
+plt.plot(time_s, voltage_v, label="Original", color='gray', alpha=0.5)
+plt.plot(time_s, lpf_filtered, label=f"Filtered (<{cutoff_freq} Hz)", color='blue')
+plt.title(f"Low-Pass Filter Result: Keep Frequencies < {cutoff_freq} Hz")
 plt.xlabel("Time (s)")
 plt.ylabel("Voltage (V)")
 plt.legend()
 plt.grid(True)
+
+plt.subplot(2, 1, 2)
+plt.plot(time_s, removed_highfreq, label=f"Removed (>={cutoff_freq} Hz)", color='red')
+plt.title(f"Removed High-Frequency Component (>= {cutoff_freq} Hz)")
+plt.xlabel("Time (s)")
+plt.ylabel("Voltage (V)")
+plt.legend()
+plt.grid(True)
+
 plt.tight_layout()
 plt.show()
