@@ -76,7 +76,10 @@ static inline uint8_t read_hp_from_dip() {
   return dip;
 }
 static inline void send_hp(uint8_t hp) {
-  Serial.print("{\"hp\":"); Serial.print(hp); Serial.println("}");
+  // HP line สั้นมากอยู่แล้ว แต่ทำให้เหมือนกันเพื่อความชัวร์
+  int n = snprintf(JBUF, sizeof(JBUF), "{\"hp\":%u}", (unsigned)hp);
+  if (n <= 0 || n >= (int)sizeof(JBUF)) return;
+  Serial.println(JBUF);
 }
 
 
@@ -149,21 +152,33 @@ void mcp_init_inputs(uint8_t cs, uint8_t addr, bool enablePullups = false, bool 
 // Tune these if you like; bigger guard = less chance to skip
 static constexpr int SERIAL_GUARD_CHANGE   = 48;
 static constexpr int SERIAL_GUARD_SNAPSHOT = 64;
+static char JBUF[128];
 
 static inline void send_change(uint64_t ts, uint8_t idx, uint8_t state) {
-  if (Serial.availableForWrite() < SERIAL_GUARD_CHANGE) { g_skipped_changes++; return; }  // <<< CHANGED
-  Serial.print("{\"ts\":");    Serial.print(ts);
-  Serial.print(",\"idx\":");   Serial.print(idx);
-  Serial.print(",\"state\":"); Serial.print(state);
-  Serial.println("}");
+  if (Serial.availableForWrite() < SERIAL_GUARD_CHANGE) { g_skipped_changes++; return; }
+
+  int n = snprintf(JBUF, sizeof(JBUF),
+                   "{\"ts\":%llu,\"idx\":%u,\"state\":%u}",
+                   (unsigned long long)ts, (unsigned)idx, (unsigned)state);
+  if (n <= 0 || n >= (int)sizeof(JBUF)) {
+    // ยาวเกิน/format พัง → ไม่ส่ง
+    g_skipped_changes++;
+    return;
+  }
+  Serial.println(JBUF);
 }
 
 static inline void send_snapshot(uint64_t ts, uint16_t low16, uint16_t high16) {
-  if (Serial.availableForWrite() < SERIAL_GUARD_SNAPSHOT) { g_skipped_snapshots++; return; }  // <<< CHANGED
-  Serial.print("{\"ts\":");        Serial.print(ts);
-  Serial.print(",\"snapshot\":["); Serial.print(low16);
-  Serial.print(",");               Serial.print(high16);
-  Serial.println("]}");
+  if (Serial.availableForWrite() < SERIAL_GUARD_SNAPSHOT) { g_skipped_snapshots++; return; }
+
+  int n = snprintf(JBUF, sizeof(JBUF),
+                   "{\"ts\":%llu,\"snapshot\":[%u,%u]}",
+                   (unsigned long long)ts, (unsigned)low16, (unsigned)high16);
+  if (n <= 0 || n >= (int)sizeof(JBUF)) {
+    g_skipped_snapshots++;
+    return;
+  }
+  Serial.println(JBUF);
 }
 
 // ---------------- Arduino lifecycle ----------------

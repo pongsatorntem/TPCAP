@@ -73,7 +73,7 @@ def log(*a):
 
 # ===== Global containers =====
 slots = {}              # idx(1..32) -> SlotState
-MAX_POST_Q = 2000       # เพดานกัน RAM ล้นเวลาเน็ตล่มนานๆ
+MAX_POST_Q = 50       # เพดานกัน RAM ล้นเวลาเน็ตล่มนานๆ
 post_q = deque()        # payload queue for posting
 running_num = 1
 
@@ -116,7 +116,15 @@ def enqueue(flowrack, state, row, col, station_code):
 
     post_q.append(payload)
     enqueued_count += 1
-    log(f"➡️  ENQ  #{enqueued_count:06d}  {payload}")
+    log(f"➡️  ENQ  #{enqueued_count:06d}  {payload}")   
+    
+    ############################## this line for debug   #####################################################
+
+
+
+
+
+
 
 async def network_watchdog(server_ip="192.168.1.13", iface="wlan0"):
     fail = 0
@@ -187,6 +195,8 @@ async def post_worker(session, post_url, dry_run=False, iface="wlan0", gateway="
         # Dry-run: just print and drop
         if dry_run:
             print("📦 WOULD POST:", payload, flush=True)
+            ############################################################### debug ####################################################
+
             post_q.popleft()
             last_post = time.monotonic()
             _consecutive_post_fails = 0
@@ -385,8 +395,8 @@ def serial_reader_thread(port: str, baud: int):
                     text = line.decode("utf-8", "ignore").strip()
                     if not text:
                         continue
-                    if len(text) > 256:
-                        # ignore pathological / garbled lines
+                    if len(text) > 128:
+                        log("⚠️ skip overlong line")
                         continue
                     if VERBOSE_SERIAL:
                         log(f"[SER] {text}")
@@ -492,7 +502,7 @@ async def main():
     
     global ingest_q, _main_loop
     _main_loop = asyncio.get_running_loop()
-    ingest_q = asyncio.Queue(maxsize=2000)
+    ingest_q = asyncio.Queue(maxsize=50)
 
     async def serial_consumer():
         global _pending_hp, current_station_code
