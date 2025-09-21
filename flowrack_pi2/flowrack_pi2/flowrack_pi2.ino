@@ -118,6 +118,11 @@ inline uint16_t mcp_read16(uint8_t cs, uint8_t addr) {
 }
 
 
+bool mcp_ping(uint8_t cs, uint8_t addr) {
+  uint8_t v = mcp_read_reg(cs, addr, REG_IODIRA);
+  return (v == 0xFF);  // ถ้าไม่ใช่ 0xFF แปลว่า config หาย / MCP งอแง
+}
+
 void mcp_init_inputs(uint8_t cs, uint8_t addr, bool enablePullups = false, bool inverted = false)
 {
   // All pins input
@@ -253,6 +258,28 @@ void loop()
     yield(); // keep WDT happy
   }
 
+
+  static U64 lastMcpCheck = 0;
+  static int mcp_fail_count = 0;
+  if (now - lastMcpCheck >= 5000) {
+    lastMcpCheck = now;
+
+    bool ok1 = mcp_ping(CS1, ADDR1);
+    bool ok2 = mcp_ping(CS2, ADDR2);
+    if (!ok1 || !ok2) {
+      DPRINTLN("[WARN] MCP unresponsive, re-init...");
+      mcp_init_inputs(CS1, ADDR1);
+      mcp_init_inputs(CS2, ADDR2);
+      mcp_fail_count++;
+      if (mcp_fail_count >= 3) {
+        DPRINTLN("[FATAL] MCP failed 3x, rebooting ESP");
+        ESP.restart();
+      }
+    } else {
+      mcp_fail_count = 0; // healthy
+    }
+  }
+  
 
   // --- periodic HP announce (every 60s) ---  // <== PASTE THIS BLOCK HERE
   static U64 lastHp = 0;
