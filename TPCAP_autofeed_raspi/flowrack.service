@@ -1,0 +1,23 @@
+[Unit]
+Description=Flowrack Pi Service
+After=network-online.target dev-esp8266.device
+Wants=network-online.target dev-esp8266.device
+
+[Service]
+Type=simple
+ExecStartPre=/bin/sleep 60
+ExecStart=/usr/bin/python3 /home/raspi-toptop/Desktop/TPCAP/flowrack_pi.py \
+    --serial /dev/esp8266 \
+    --baud 115200 \
+    --server-ip 192.168.1.13 \
+    --server-port 4499 \
+    --station-code 9 \
+    --wifi-iface wlan1 \
+    --gateway 192.168.1.2
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/raspi-toptop/flowrack.log
+StandardError=append:/home/raspi-toptop/flowrack.log
+
+[Install]
+WantedBy=default.target
